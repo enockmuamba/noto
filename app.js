@@ -21,6 +21,7 @@ const elements = {
   audioFileInput: document.getElementById('audioFileInput'),
   courseModal: document.getElementById('courseModal'),
   modalTitle: document.getElementById('modalTitle'),
+  modalFieldLabel: document.getElementById('modalFieldLabel'),
   courseNameInput: document.getElementById('courseNameInput'),
   courseForm: document.getElementById('courseForm'),
   toast: document.getElementById('toast'),
@@ -93,8 +94,15 @@ function showToast(message) {
 }
 
 function openCourseModal(mode) {
-  elements.modalTitle.textContent = mode === 'rename' ? 'Renommer le cours' : 'Nouveau cours';
-  elements.courseNameInput.value = mode === 'rename' ? selectedCourse()?.name || '' : '';
+  const isRecordingRename = mode === 'rename-recording';
+  const recording = isRecordingRename ? state.recordings?.find((item) => item.id === state.editingRecordingId) : null;
+  elements.modalTitle.textContent = isRecordingRename
+    ? 'Renommer l’enregistrement'
+    : mode === 'rename' ? 'Renommer le cours' : 'Nouveau cours';
+  elements.modalFieldLabel.textContent = isRecordingRename ? 'Nom de l’enregistrement' : 'Nom du cours';
+  elements.courseNameInput.value = isRecordingRename
+    ? recording?.name || ''
+    : mode === 'rename' ? selectedCourse()?.name || '' : '';
   elements.courseForm.dataset.mode = mode;
   elements.courseModal.classList.remove('is-hidden');
   elements.courseNameInput.focus();
@@ -130,10 +138,21 @@ function renameCourse(name) {
   render();
 }
 
+async function renameRecording(name) {
+  const recording = state.recordings?.find((item) => item.id === state.editingRecordingId);
+  if (!recording) return;
+  recording.name = name.trim();
+  await saveAudio(recording);
+  closeCourseModal();
+  showToast('Enregistrement renommé');
+  renderRecordings();
+}
+
 async function removeCourse() {
   const course = selectedCourse();
   if (!course || !window.confirm(`Supprimer le cours « ${course.name} » ?`)) return;
   const recordings = await getCourseAudio(course.id);
+  state.recordings = recordings;
   await Promise.all(recordings.map((recording) => deleteAudio(recording.id)));
   state.courses = state.courses.filter((item) => item.id !== course.id);
   state.selectedCourseId = state.courses[0]?.id || null;
@@ -166,6 +185,7 @@ async function renderRecordings() {
   if (!course) return;
   elements.courseTitle.textContent = course.name;
   const recordings = await getCourseAudio(course.id);
+  state.recordings = recordings;
   elements.recordingCount.textContent = String(recordings.length);
   if (!recordings.length) {
     elements.recordingList.innerHTML = '<div class="empty-state">Aucun enregistrement dans ce cours.</div>';
@@ -179,6 +199,9 @@ async function renderRecordings() {
       </div>
       <div class="recording-actions">
         <audio class="audio-player" controls src="${URL.createObjectURL(recording.file)}"></audio>
+        <button class="action-button" data-rename-recording="${recording.id}" type="button" aria-label="Renommer ${escapeHtml(recording.name)}" title="Renommer">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m14 6 4 4M5 19l3.5-.7L18.5 8.3a2.12 2.12 0 0 0-3-3L5.5 15.3 5 19Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
         <a class="action-button" href="${URL.createObjectURL(recording.file)}" download="${escapeHtml(recording.name)}" aria-label="Télécharger ${escapeHtml(recording.name)}" title="Télécharger">
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 20h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
@@ -188,6 +211,12 @@ async function renderRecordings() {
       </div>
     </article>
   `).join('');
+  elements.recordingList.querySelectorAll('[data-rename-recording]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.editingRecordingId = button.dataset.renameRecording;
+      openCourseModal('rename-recording');
+    });
+  });
   elements.recordingList.querySelectorAll('[data-delete-recording]').forEach((button) => {
     button.addEventListener('click', async () => {
       await deleteAudio(button.dataset.deleteRecording);
@@ -270,7 +299,14 @@ elements.courseForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const name = elements.courseNameInput.value.trim();
   if (!name) return;
-  elements.courseForm.dataset.mode === 'rename' ? renameCourse(name) : createCourse(name);
+  const mode = elements.courseForm.dataset.mode;
+  if (mode === 'rename-recording') {
+    renameRecording(name);
+  } else if (mode === 'rename') {
+    renameCourse(name);
+  } else {
+    createCourse(name);
+  }
 });
 document.getElementById('headerAddCourseBtn').addEventListener('click', () => openCourseModal('create'));
 document.getElementById('navAddCourseBtn').addEventListener('click', () => openCourseModal('create'));
